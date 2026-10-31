@@ -42,7 +42,7 @@ Flickable {
                         Layout.fillHeight: true
                         postureKey: appState.postureKey
                         skeletonVisible: appState.skeletonVisible
-                        live: appState.monitoringState !== "not_started"
+                        live: appState.monitoringState === "active"
                         onSkeletonToggled: appState.setSkeletonVisible(checked)
                     }
                     MonitoringControls {

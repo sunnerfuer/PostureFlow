@@ -23,9 +23,12 @@ Rectangle {
             height: 62
             spacing: 10
             Image {
-                source: "../../assets/main_icon_cat.png"
+                source: "../../assets/main_icon_cat.svg"
                 width: 48; height: 48
+                sourceSize: Qt.size(144, 144)
                 fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
@@ -57,8 +60,8 @@ Rectangle {
                     anchors.leftMargin: 14
                     spacing: 14
                     Image {
-                        width: 32
-                        height: 32
+                        width: modelData.icon === "history" ? 32 : 36
+                        height: modelData.icon === "history" ? 32 : 36
 
                         anchors.verticalCenter: parent.verticalCenter
 
