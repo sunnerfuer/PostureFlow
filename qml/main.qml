@@ -14,6 +14,17 @@ ApplicationWindow {
     title: "PostureFlow"
     color: Style.Theme.canvas
 
+    // Live Monitoring is created on first visit and retained for the whole app lifetime.
+    property bool livePageOpened: appState.currentPage === "live"
+
+    Connections {
+        target: appState
+        function onCurrentPageChanged() {
+            if (appState.currentPage === "live")
+                window.livePageOpened = true
+        }
+    }
+
     function sourceForPage(page) {
         if (page === "live") return "pages/LiveMonitoringPage.qml"
         if (page === "statistics") return "pages/StatisticsPage.qml"
@@ -38,10 +49,25 @@ ApplicationWindow {
             Layout.fillHeight: true
             color: Style.Theme.canvas
 
+            // Do NOT unload Live Monitoring when navigating to another page.
+            // Its Camera and permission state must survive navigation.
+            Loader {
+                id: livePageLoader
+                anchors.fill: parent
+                active: window.livePageOpened
+                visible: appState.currentPage === "live"
+                source: "pages/LiveMonitoringPage.qml"
+                asynchronous: false
+            }
+
+            // All other pages can be recreated as before.
             Loader {
                 id: pageLoader
                 anchors.fill: parent
-                source: window.sourceForPage(appState.currentPage)
+                visible: appState.currentPage !== "live"
+                source: appState.currentPage === "live"
+                        ? ""
+                        : window.sourceForPage(appState.currentPage)
                 asynchronous: false
             }
         }

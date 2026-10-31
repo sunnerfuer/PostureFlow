@@ -1,108 +1,355 @@
 import QtQuick
+import QtQuick.Controls
+import QtCore
+import QtMultimedia
 import "../theme" as Style
 
 Rectangle {
     id: root
+
     property string postureKey: "good"
     property bool skeletonVisible: true
     property bool live: true
     property bool framingGuide: false
     property bool mirrored: false
+    property string cameraError: ""
+    property bool userApprovedCamera: false
+    property bool permissionAsked: false
+    property bool permissionPromptVisible: false
+
     signal skeletonToggled(bool checked)
+    signal accessDenied()
+
+    readonly property bool cameraAvailable: devices.videoInputs.length > 0
+
     radius: 18
-    color: "#D8D2CA"
+    color: "#1C1C26"
     clip: true
 
-    function sourceForPosture() {
-        if (postureKey === "forward") return "../../assets/camera_forward.jpg"
-        if (postureKey === "left") return "../../assets/camera_left.jpg"
-        return "../../assets/camera_good.jpg"
-    }
-
-    Image {
-        anchors.fill: parent
-        source: root.sourceForPosture()
-        fillMode: Image.PreserveAspectCrop
-        mirror: root.mirrored
-        smooth: true
-    }
-
-    Canvas {
-        id: skeleton
-        anchors.fill: parent
-        visible: root.skeletonVisible && !root.framingGuide
-        opacity: 0.78
-        onPaint: {
-            var ctx=getContext("2d");ctx.clearRect(0,0,width,height)
-            var c = root.postureKey === "forward" ? "#F1AE91" : (root.postureKey === "left" ? "#C9B6F4" : "#CFEA7A")
-            var pts
-            if(root.postureKey === "forward") pts=[[0.39,0.57],[0.50,0.62],[0.61,0.58],[0.33,0.91],[0.67,0.91]]
-            else if(root.postureKey === "left") pts=[[0.39,0.54],[0.51,0.60],[0.63,0.64],[0.34,0.91],[0.70,0.91]]
-            else pts=[[0.37,0.56],[0.50,0.56],[0.63,0.56],[0.31,0.91],[0.69,0.91]]
-            function P(i){return [pts[i][0]*width,pts[i][1]*height]}
-            ctx.strokeStyle="rgba(255,255,255,0.80)";ctx.lineWidth=2;ctx.lineCap="round"
-            ctx.beginPath();var p=P(0);ctx.moveTo(p[0],p[1]);p=P(1);ctx.lineTo(p[0],p[1]);p=P(2);ctx.lineTo(p[0],p[1]);ctx.stroke()
-            ctx.beginPath();p=P(1);ctx.moveTo(p[0],p[1]);ctx.lineTo(p[0],height*0.90);ctx.stroke()
-            ctx.beginPath();p=P(0);ctx.moveTo(p[0],p[1]);p=P(3);ctx.lineTo(p[0],p[1]);ctx.stroke()
-            ctx.beginPath();p=P(2);ctx.moveTo(p[0],p[1]);p=P(4);ctx.lineTo(p[0],p[1]);ctx.stroke()
-            for(var i=0;i<3;i++){p=P(i);ctx.beginPath();ctx.arc(p[0],p[1],8,0,Math.PI*2);ctx.fillStyle=c;ctx.fill();ctx.strokeStyle="rgba(255,255,255,.7)";ctx.lineWidth=1;ctx.stroke()}
+    function updateCamera() {
+        // Session stops only on Pause/End, not on navigation.
+        if (!root.live) {
+            webcamCamera.stop()
+            root.userApprovedCamera = false
+            root.permissionAsked = false
+            root.permissionPromptVisible = false
+            root.cameraError = ""
+            return
         }
-        onWidthChanged: requestPaint(); onHeightChanged: requestPaint()
-    }
-    onPostureKeyChanged: skeleton.requestPaint()
-    onSkeletonVisibleChanged: skeleton.requestPaint()
 
-    Canvas {
+        if (!root.cameraAvailable) {
+            webcamCamera.stop()
+            root.cameraError = "Веб-камера не обнаружена"
+            return
+        }
+
+        // Do not open a consent dialog over Dashboard/History before the user
+        // actually enters the Live Monitoring page.
+        if (!root.userApprovedCamera) {
+            webcamCamera.stop()
+            if (root.visible && !root.permissionAsked) {
+                root.permissionAsked = true
+                root.permissionPromptVisible = true
+            }
+            return
+        }
+
+        if (systemCameraPermission.status === Qt.PermissionStatus.Granted) {
+            root.cameraError = ""
+            webcamCamera.start()
+        } else if (systemCameraPermission.status === Qt.PermissionStatus.Undetermined) {
+            webcamCamera.stop()
+            systemCameraPermission.request()
+        } else {
+            webcamCamera.stop()
+            root.cameraError = "Доступ к камере запрещён в настройках системы"
+        }
+    }
+
+    function allowCamera() {
+        root.permissionPromptVisible = false
+        root.userApprovedCamera = true
+        root.updateCamera()
+    }
+
+    function denyCamera() {
+        root.permissionPromptVisible = false
+        root.userApprovedCamera = false
+        webcamCamera.stop()
+        root.accessDenied()
+    }
+
+    CameraPermission {
+        id: systemCameraPermission
+        onStatusChanged: {
+            if (root.userApprovedCamera)
+                root.updateCamera()
+        }
+    }
+
+    MediaDevices {
+        id: devices
+        onVideoInputsChanged: root.updateCamera()
+    }
+
+    CaptureSession {
+        id: captureSession
+        camera: Camera {
+            id: webcamCamera
+            cameraDevice: devices.defaultVideoInput
+
+            onErrorOccurred: function(error, errorString) {
+                root.cameraError = errorString
+            }
+        }
+        videoOutput: videoOutput
+    }
+
+    VideoOutput {
+        id: videoOutput
         anchors.fill: parent
-        visible: root.framingGuide
-        onPaint: {
-            var ctx=getContext("2d");ctx.clearRect(0,0,width,height)
-            ctx.strokeStyle="#C9B6F4";ctx.lineWidth=3;ctx.lineCap="round"
-            var x=width*.20,y=height*.24,w=width*.60,h=height*.61,l=34
-            function seg(x1,y1,x2,y2){ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke()}
-            seg(x,y,x+l,y);seg(x,y,x,y+l);seg(x+w,y,x+w-l,y);seg(x+w,y,x+w,y+l)
-            seg(x,y+h,x+l,y+h);seg(x,y+h,x,y+h-l);seg(x+w,y+h,x+w-l,y+h);seg(x+w,y+h,x+w,y+h-l)
+        fillMode: VideoOutput.PreserveAspectFit
+
+        transform: Scale {
+            origin.x: videoOutput.width / 2
+            xScale: root.mirrored ? -1 : 1
         }
     }
 
     Rectangle {
-        visible: root.live && !root.framingGuide
-        x: 12; y: 12; width: 68; height: 32; radius: 10
-        color: "#292825DD"
-        Row { anchors.centerIn: parent; spacing: 7
-            Rectangle { width: 8; height: 8; radius: 4; color: Style.Theme.lime; anchors.verticalCenter: parent.verticalCenter }
-            Text { text: "ЭФИР"; color: "white"; font.family: Style.Theme.fontFamily; font.pixelSize: 12; font.weight: Font.Bold }
-        }
-    }
-    Rectangle {
-        visible: !root.framingGuide
-        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12
-        width: 110; height: 32; radius: 10; color: "#292825DD"
-        Row { anchors.centerIn: parent; spacing: 8
-            Text { text: "Скелет позы"; color: "white"; font.family: Style.Theme.fontFamily; font.pixelSize: 11 }
-            Rectangle { width: 34; height: 18; radius: 9; color: root.skeletonVisible ? "#6B9230" : "#65656D"
-                Rectangle { width:14;height:14;radius:7;y:2;x:root.skeletonVisible?18:2;color:"white"; Behavior on x { NumberAnimation { duration:120 } } }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.skeletonToggled(!root.skeletonVisible) }
+        anchors.fill: parent
+        color: "#1C1C26"
+        visible: !webcamCamera.active || root.cameraError !== ""
+
+        Column {
+            width: parent.width - 48
+            anchors.centerIn: parent
+            spacing: 10
+
+            Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 17
+                color: "white"
+                text: root.cameraError !== ""
+                      ? "Ошибка камеры: " + root.cameraError
+                      : (!root.cameraAvailable
+                         ? "Веб-камера не обнаружена"
+                         : (!root.live
+                            ? "Камера выключена или сеанс на паузе"
+                            : "Подключение к веб-камере..."))
+            }
+
+            Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 12
+                color: "#B9B8C2"
+                text: "Предпросмотр без записи видео"
             }
         }
     }
+
+    Canvas {
+        anchors.fill: parent
+        visible: root.framingGuide && webcamCamera.active
+
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+            ctx.strokeStyle = "#C9B6F4"
+            ctx.lineWidth = 3
+            ctx.lineCap = "round"
+            var x = width * 0.20
+            var y = height * 0.24
+            var w = width * 0.60
+            var h = height * 0.61
+            var l = 34
+            function line(x1, y1, x2, y2) {
+                ctx.beginPath()
+                ctx.moveTo(x1, y1)
+                ctx.lineTo(x2, y2)
+                ctx.stroke()
+            }
+            line(x, y, x + l, y)
+            line(x, y, x, y + l)
+            line(x + w, y, x + w - l, y)
+            line(x + w, y, x + w, y + l)
+            line(x, y + h, x + l, y + h)
+            line(x, y + h, x, y + h - l)
+            line(x + w, y + h, x + w - l, y + h)
+            line(x + w, y + h, x + w, y + h - l)
+        }
+    }
+
     Rectangle {
-        visible: !root.framingGuide
-        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        height: 34; color: "#25231F99"
+        visible: root.live && webcamCamera.active && !root.framingGuide
+        x: 12
+        y: 12
+        width: 68
+        height: 32
+        radius: 10
+        color: "#292825DD"
+
         Row {
-            anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14
-            Text { text: "▣  Встроенная веб-камера"; color: "white"; font.family: Style.Theme.fontFamily; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter; width: parent.width-70 }
-            Text { text: "30 кадр/с"; color: "white"; font.family: Style.Theme.fontFamily; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+            anchors.centerIn: parent
+            spacing: 7
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                color: Style.Theme.lime
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                text: "ЭФИР"
+                color: "white"
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 12
+                font.weight: Font.Bold
+            }
         }
     }
+
     Rectangle {
-        visible: root.framingGuide
-        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12
-        width: 108; height: 32; radius: 10; color: "#292825DD"
-        Row { anchors.centerIn: parent; spacing: 7
-            Text { text: "Вы в кадре"; color: "white"; font.family: Style.Theme.fontFamily; font.pixelSize: 10 }
-            Rectangle { width:9;height:9;radius:5;color:Style.Theme.lime; anchors.verticalCenter: parent.verticalCenter }
+        visible: webcamCamera.active && !root.framingGuide
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 12
+        width: 165
+        height: 32
+        radius: 10
+        color: "#292825DD"
+
+        Text {
+            anchors.centerIn: parent
+            text: "Скелет: после ML"
+            color: "white"
+            font.family: Style.Theme.fontFamily
+            font.pixelSize: 11
         }
     }
+
+    Rectangle {
+        visible: webcamCamera.active && !root.framingGuide
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 34
+        color: "#25231F99"
+
+        Row {
+            anchors.fill: parent
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            spacing: 8
+
+            Text {
+                text: root.cameraAvailable ? devices.defaultVideoInput.description : "Камера"
+                color: "white"
+                elide: Text.ElideRight
+                width: parent.width - 105
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 11
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                text: "Локально"
+                color: "white"
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 11
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    Popup {
+        id: cameraPermissionPopup
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(460, parent ? parent.width - 32 : 460)
+        height: 225
+        padding: 24
+        modal: true
+        focus: true
+        closePolicy: Popup.NoAutoClose
+        visible: root.permissionPromptVisible
+
+        background: Rectangle {
+            color: "#FFFFFF"
+            radius: 18
+            border.width: 1
+            border.color: "#E7E3EB"
+        }
+
+        contentItem: Column {
+            spacing: 15
+
+            Text {
+                width: parent.width
+                text: "Разрешить доступ к веб-камере?"
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 19
+                font.weight: Font.Bold
+                color: "#20202A"
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                width: parent.width
+                text: "PostureFlow будет использовать камеру для мониторинга осанки. Видео отображается только локально и не записывается."
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 12
+                color: "#626273"
+                wrapMode: Text.WordWrap
+            }
+
+            Row {
+                width: parent.width
+                height: 42
+                spacing: 12
+
+                Button {
+                    width: (parent.width - parent.spacing) / 2
+                    height: 42
+                    text: "Запретить"
+                    onClicked: root.denyCamera()
+                    background: Rectangle {
+                        radius: 12
+                        color: "#F4F2F3"
+                        border.color: "#DEDAE2"
+                    }
+                }
+
+                Button {
+                    width: (parent.width - parent.spacing) / 2
+                    height: 42
+                    text: "Разрешить"
+                    onClicked: root.allowCamera()
+                    background: Rectangle {
+                        radius: 12
+                        color: "#A9C98C"
+                    }
+                }
+            }
+        }
+    }
+
+    onLiveChanged: updateCamera()
+    onVisibleChanged: {
+        // Navigation hides only the preview.  The approved camera stays on.
+        // An unanswered dialog is postponed until the user returns.
+        if (!root.visible && root.permissionPromptVisible) {
+            root.permissionPromptVisible = false
+            root.permissionAsked = false
+        }
+        if (root.visible)
+            root.updateCamera()
+    }
+    Component.onCompleted: updateCamera()
+    Component.onDestruction: webcamCamera.stop()
 }

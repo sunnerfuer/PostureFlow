@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls
+import QtCore
 import QtMultimedia
 import "../theme" as Style
 
@@ -11,8 +13,14 @@ Rectangle {
     property bool framingGuide: false
     property bool mirrored: false
     property string cameraError: ""
+    property bool userApprovedCamera: false
+    property bool permissionAsked: false
+    property bool permissionPromptVisible: false
+    // Watch the actual session state, including End pressed while paused.
+    readonly property string sessionState: appState.monitoringState
 
     signal skeletonToggled(bool checked)
+    signal accessDenied()
 
     readonly property bool cameraAvailable: devices.videoInputs.length > 0
 
@@ -21,11 +29,71 @@ Rectangle {
     clip: true
 
     function updateCamera() {
-        if (root.visible && root.live && root.cameraAvailable) {
+        // Pausing stops the camera but keeps previously granted consent.
+        // Only ending the session (not_started) resets consent.
+        // Navigation does not change sessionState and does not stop the camera.
+        if (!root.live || root.sessionState !== "active") {
+            webcamCamera.stop()
+            root.permissionPromptVisible = false
+            root.cameraError = ""
+
+            if (root.sessionState === "not_started") {
+                root.userApprovedCamera = false
+                root.permissionAsked = false
+            } else if (!root.userApprovedCamera) {
+                // A denied/unanswered request must be shown again on retry.
+                root.permissionAsked = false
+            }
+            return
+        }
+
+        if (!root.cameraAvailable) {
+            webcamCamera.stop()
+            root.cameraError = "Веб-камера не обнаружена"
+            return
+        }
+
+        // Do not open a consent dialog over Dashboard/History before the user
+        // actually enters the Live Monitoring page.
+        if (!root.userApprovedCamera) {
+            webcamCamera.stop()
+            if (root.visible && !root.permissionAsked) {
+                root.permissionAsked = true
+                root.permissionPromptVisible = true
+            }
+            return
+        }
+
+        if (systemCameraPermission.status === Qt.PermissionStatus.Granted) {
             root.cameraError = ""
             webcamCamera.start()
+        } else if (systemCameraPermission.status === Qt.PermissionStatus.Undetermined) {
+            webcamCamera.stop()
+            systemCameraPermission.request()
         } else {
             webcamCamera.stop()
+            root.cameraError = "Доступ к камере запрещён в настройках системы"
+        }
+    }
+
+    function allowCamera() {
+        root.permissionPromptVisible = false
+        root.userApprovedCamera = true
+        root.updateCamera()
+    }
+
+    function denyCamera() {
+        root.permissionPromptVisible = false
+        root.userApprovedCamera = false
+        webcamCamera.stop()
+        root.accessDenied()
+    }
+
+    CameraPermission {
+        id: systemCameraPermission
+        onStatusChanged: {
+            if (root.userApprovedCamera)
+                root.updateCamera()
         }
     }
 
@@ -209,8 +277,90 @@ Rectangle {
         }
     }
 
+    Popup {
+        id: cameraPermissionPopup
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(460, parent ? parent.width - 32 : 460)
+        height: 225
+        padding: 24
+        modal: true
+        focus: true
+        closePolicy: Popup.NoAutoClose
+        visible: root.permissionPromptVisible
+
+        background: Rectangle {
+            color: "#FFFFFF"
+            radius: 18
+            border.width: 1
+            border.color: "#E7E3EB"
+        }
+
+        contentItem: Column {
+            spacing: 15
+
+            Text {
+                width: parent.width
+                text: "Разрешить доступ к веб-камере?"
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 19
+                font.weight: Font.Bold
+                color: "#20202A"
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                width: parent.width
+                text: "PostureFlow будет использовать камеру для мониторинга осанки. Видео отображается только локально и не записывается."
+                font.family: Style.Theme.fontFamily
+                font.pixelSize: 12
+                color: "#626273"
+                wrapMode: Text.WordWrap
+            }
+
+            Row {
+                width: parent.width
+                height: 42
+                spacing: 12
+
+                Button {
+                    width: (parent.width - parent.spacing) / 2
+                    height: 42
+                    text: "Запретить"
+                    onClicked: root.denyCamera()
+                    background: Rectangle {
+                        radius: 12
+                        color: "#F4F2F3"
+                        border.color: "#DEDAE2"
+                    }
+                }
+
+                Button {
+                    width: (parent.width - parent.spacing) / 2
+                    height: 42
+                    text: "Разрешить"
+                    onClicked: root.allowCamera()
+                    background: Rectangle {
+                        radius: 12
+                        color: "#A9C98C"
+                    }
+                }
+            }
+        }
+    }
+
     onLiveChanged: updateCamera()
-    onVisibleChanged: updateCamera()
+    onSessionStateChanged: updateCamera()
+    onVisibleChanged: {
+        // Navigation hides only the preview.  The approved camera stays on.
+        // An unanswered dialog is postponed until the user returns.
+        if (!root.visible && root.permissionPromptVisible) {
+            root.permissionPromptVisible = false
+            root.permissionAsked = false
+        }
+        if (root.visible)
+            root.updateCamera()
+    }
     Component.onCompleted: updateCamera()
     Component.onDestruction: webcamCamera.stop()
 }

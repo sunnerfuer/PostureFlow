@@ -43,6 +43,7 @@ Flickable {
                         postureKey: appState.postureKey
                         skeletonVisible: appState.skeletonVisible
                         live: appState.monitoringState === "active"
+                        onAccessDenied: appState.pauseMonitoring()
                         onSkeletonToggled: appState.setSkeletonVisible(checked)
                     }
                     MonitoringControls {
